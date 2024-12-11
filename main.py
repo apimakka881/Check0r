@@ -4,24 +4,127 @@ import random
 import string
 import time
 import re
+from datetime import datetime, timedelta
 
 BOT_TOKEN = '7811265876:AAGMgmBsLgnioIZRnDOr395Hw2L9Hd98lYw'
+OWNER_ID = 6957690997
+PREMIUM_FILE = 'premium.txt'
+
 bot = telebot.TeleBot(BOT_TOKEN)
 
-def generate_user_agent():
-    return 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36'
+def load_premium_users():
+    try:
+        with open(PREMIUM_FILE, 'r') as f:
+            return {
+                int(line.split()[0]): datetime.strptime(line.split()[1], '%Y-%m-%d')
+                for line in f.readlines()
+            }
+    except FileNotFoundError:
+        return {}
 
-def generate_email():
-    domains = ["google.com", "live.com", "yahoo.com", "hotmail.org"]
-    name_length = 8
-    name = ''.join(random.choices(string.ascii_lowercase + string.digits, k=name_length))
-    domain = random.choice(domains)
-    return f"{name}@{domain}"
+premium_users = load_premium_users()
 
-def generate_username():
-    name = ''.join(random.choices(string.ascii_lowercase, k=20))
-    number = ''.join(random.choices(string.digits, k=20))
-    return f"{name}{number}"
+def save_premium_users():
+    with open(PREMIUM_FILE, 'w') as f:
+        for user_id, expiry_date in premium_users.items():
+            f.write(f"{user_id} {expiry_date.strftime('%Y-%m-%d')}\n")
+
+def is_authorized(user_id):
+    return user_id in premium_users and premium_users[user_id] > datetime.now()
+
+def add_premium_user(user_id, days):
+    expiry_date = datetime.now() + timedelta(days=days)
+    premium_users[user_id] = expiry_date
+    save_premium_users()
+
+def unauthorized_message(message):
+    bot.send_message(
+        message.chat.id,
+        "🚫 Unauthorized access detected. Please contact @Titan_kumar to gain access."
+    )
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    if not is_authorized(message.from_user.id):
+        return unauthorized_message(message)
+    msg = bot.send_message(message.chat.id, "Bot is booting up 🚀 [□□□□□□□□□□]")
+    for i in range(10):
+        bot.edit_message_text(f"Bot is booting up 🚀 [{('■' * (i + 1)).ljust(10, '□')}]", message.chat.id, msg.id)
+        time.sleep(0.2)
+    bot.edit_message_text(
+        "🚀 Welcome to the Future CC Checker Bot!\nUse /help to see available commands. 🌟", 
+        msg.chat.id, 
+        msg.id
+    )
+
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    if not is_authorized(message.from_user.id):
+        return unauthorized_message(message)
+    bot.send_message(message.chat.id, "🛠️ **Available Commands:**\n\n/chk [card] - Check a single CC 💳\n/mchk - Check multiple CCs via file 📄")
+
+@bot.message_handler(commands=['add'])
+def add_command(message):
+    if message.from_user.id != OWNER_ID:
+        return unauthorized_message(message)
+    try:
+        _, user_id, days = message.text.split()
+        user_id = int(user_id)
+        days = int(days)
+        if days > 365:
+            bot.send_message(message.chat.id, "🚫 Maximum subscription limit is 365 days.")
+            return
+        add_premium_user(user_id, days)
+        bot.send_message(message.chat.id, f"✅ User {user_id} added with a {days}-day subscription.")
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Invalid format. Use: `/add <user_id> <days>`")
+
+@bot.message_handler(commands=['chk'])
+def check_cc(message):
+    if not is_authorized(message.from_user.id):
+        return unauthorized_message(message)
+    try:
+        cc = message.text.split()[1]
+        msg = bot.send_message(message.chat.id, "Processing your CC 💳")
+        result = process_single_cc(cc)
+        bot.send_message(message.chat.id, result)
+    except IndexError:
+        bot.send_message(message.chat.id, "❌ Invalid format. Use: `/chk 4934740000721153|10|2027|817`")
+
+@bot.message_handler(commands=['mchk'])
+def multi_check_cc(message):
+    if not is_authorized(message.from_user.id):
+        return unauthorized_message(message)
+    bot.send_message(message.chat.id, "📄 Send the text file containing CCs now.")
+
+@bot.message_handler(content_types=['document'])
+def handle_file(message):
+    if not is_authorized(message.from_user.id):
+        return unauthorized_message(message)
+    try:
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        cc_list = downloaded_file.decode('utf-8').strip().splitlines()
+        bot.send_message(message.chat.id, "Processing your CCs ✅")
+
+        approved = []
+        for cc in cc_list:
+            result = process_single_cc(cc)
+            if "APPROVED ✅" in result:
+                approved.append(cc)
+                bot.send_message(message.chat.id, result)
+
+        response = f"✅ **Approved Cards:** {len(approved)}\n"
+        bot.send_message(message.chat.id, response)
+
+        if approved:
+            approved_file = "\n".join(approved)
+            with open("approved_cards.txt", "w") as f:
+                f.write(approved_file)
+            with open("approved_cards.txt", "rb") as f:
+                bot.send_document(message.chat.id, f)
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Error processing file: {str(e)}")
 
 def process_single_cc(cc):
     try:
@@ -88,61 +191,14 @@ def process_single_cc(cc):
             f"👨‍💻 **Developed by:** @Titan_kumar"
         )
 
-@bot.message_handler(commands=['start'])
-def start(message):
-    msg = bot.send_message(message.chat.id, "Bot is booting up 🚀 [□□□□□□□□□□]")
-    for i in range(10):
-        bot.edit_message_text(f"Bot is booting up 🚀 [{('■' * (i + 1)).ljust(10, '□')}]", message.chat.id, msg.id)
-        time.sleep(0.2)
-    bot.edit_message_text(
-        "🚀 Welcome to the Future CC Checker Bot!\nUse /help to see available commands. 🌟", 
-        msg.chat.id, 
-        msg.id
-    )
+def generate_user_agent():
+    return 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36'
 
-@bot.message_handler(commands=['help'])
-def help_command(message):
-    bot.send_message(message.chat.id, "🛠️ **Available Commands:**\n\n/chk [card] - Check a single CC 💳\n/mchk - Check multiple CCs via file 📄")
-
-@bot.message_handler(commands=['chk'])
-def check_cc(message):
-    try:
-        cc = message.text.split()[1]
-        msg = bot.send_message(message.chat.id, "Processing your CC 💳")
-        result = process_single_cc(cc)
-        bot.send_message(message.chat.id, result)
-    except IndexError:
-        bot.send_message(message.chat.id, "❌ Invalid format. Use: `/chk 4934740000721153|10|2027|817`")
-
-@bot.message_handler(commands=['mchk'])
-def multi_check_cc(message):
-    bot.send_message(message.chat.id, "📄 Send the text file containing CCs now.")
-
-@bot.message_handler(content_types=['document'])
-def handle_file(message):
-    try:
-        file_info = bot.get_file(message.document.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        cc_list = downloaded_file.decode('utf-8').strip().splitlines()
-        bot.send_message(message.chat.id, "Processing your CCs ✅")
-
-        approved = []
-        for cc in cc_list:
-            result = process_single_cc(cc)
-            if "APPROVED ✅" in result:
-                approved.append(cc)
-                bot.send_message(message.chat.id, result)
-
-        response = f"✅ **Approved Cards:** {len(approved)}\n"
-        bot.send_message(message.chat.id, response)
-
-        if approved:
-            approved_file = "\n".join(approved)
-            with open("approved_cards.txt", "w") as f:
-                f.write(approved_file)
-            with open("approved_cards.txt", "rb") as f:
-                bot.send_document(message.chat.id, f)
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Error processing file: {str(e)}")
+def generate_email():
+    domains = ["google.com", "live.com", "yahoo.com", "hotmail.org"]
+    name_length = 8
+    name = ''.join(random.choices(string.ascii_lowercase + string.digits, k=name_length))
+    domain = random.choice(domains)
+    return f"{name}@{domain}"
 
 bot.polling()
